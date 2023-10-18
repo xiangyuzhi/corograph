@@ -29,14 +29,13 @@
 namespace galois {
 namespace worklists {
 
-template <typename T>
-class ConExtListNode {
-  T* next;
+template <typename T> class ConExtListNode {
+  T *next;
 
 public:
   ConExtListNode() : next(0) {}
-  T*& getNext() { return next; }
-  T* const& getNext() const { return next; }
+  T *&getNext() { return next; }
+  T *const &getNext() const { return next; }
 };
 
 template <typename T>
@@ -44,96 +43,102 @@ class ConExtIterator
     : public boost::iterator_facade<ConExtIterator<T>, T,
                                     boost::forward_traversal_tag> {
   friend class boost::iterator_core_access;
-  T* at;
+  T *at;
 
   template <typename OtherTy>
-  bool equal(const ConExtIterator<OtherTy>& o) const {
+  bool equal(const ConExtIterator<OtherTy> &o) const {
     return at == o.at;
   }
 
-  T& dereference() const { return *at; }
+  T &dereference() const { return *at; }
   void increment() { at = at->getNext(); }
 
 public:
   ConExtIterator() : at(0) {}
 
   template <typename OtherTy>
-  ConExtIterator(const ConExtIterator<OtherTy>& o) : at(o.at) {}
+  ConExtIterator(const ConExtIterator<OtherTy> &o) : at(o.at) {}
 
-  explicit ConExtIterator(T* x) : at(x) {}
+  explicit ConExtIterator(T *x) : at(x) {}
 };
 
-
-    template <typename T, bool concurrent>
-    class ConExtLinkedQueue2 {
-        substrate::PtrLock<T> head;
-        T* tail;
-        bool partitionState; // 0 for empty (not in list or execution), 1 for not empty
-
-    public:
-        typedef ConExtListNode<T> ListNode;
-
-        ConExtLinkedQueue2() : tail(0), partitionState(0) { }
-
-        bool empty() const { return !tail; }
-
-        bool push(T* C) { // return true: need to push to gatherQueue
-            head.lock();
-            C->getNext() = 0;
-            if (tail) {
-                tail->getNext() = C;
-                tail            = C;
-                head.unlock();
-                return false;
-            } else {
-                tail = C;
-                bool ret = !partitionState;
-                partitionState = true; // will push in list
-                head.unlock_and_set(C);
-                return ret;// if not in list, then push.
-            }
-        }
-
-        T* pop() {
-            // lock free Fast path empty case
-//            if (empty())
-//                return 0;
-            head.lock();
-            T* C = head.getValue();
-            if (!C) {
-                partitionState = false; // if pop the final element
-                head.unlock();
-                return 0;
-            }
-            if (tail == C) {
-                tail = 0;
-                head.unlock_and_clear();
-            } else {
-                head.unlock_and_set(C->getNext());
-                C->getNext() = 0;
-            }
-            return C;
-        }
-    };
-
-template <typename T, bool concurrent>
-class ConExtLinkedQueue {
+template <typename T, bool concurrent> class ConExtLinkedQueue2 {
   substrate::PtrLock<T> head;
-  T* tail;
+  T *tail;
+  bool
+      partitionState; // 0 for empty (not in list or execution), 1 for not empty
+  uint64_t numa_id;   // record the numa id of partition
 
 public:
   typedef ConExtListNode<T> ListNode;
 
-  ConExtLinkedQueue() : tail(0) { }
+  ConExtLinkedQueue2() : tail(0), partitionState(0), numa_id(1) {}
 
   bool empty() const { return !tail; }
 
-  void push(T* C) {
+  bool push(T *C) { // return true: need to push to gatherQueue
     head.lock();
     C->getNext() = 0;
     if (tail) {
       tail->getNext() = C;
-      tail            = C;
+      tail = C;
+      head.unlock();
+      return false;
+    } else {
+      tail = C;
+      bool ret = !partitionState;
+      partitionState = true; // will push in list
+      head.unlock_and_set(C);
+      if (ret) {
+        return numa_id; // if not in list, then push.
+      } else {
+        return 0;
+      }
+    }
+  }
+
+  void setNuma(uint64_t pop_id) { numa_id = pop_id + 1; }
+
+  T *pop() {
+    // lock free Fast path empty case
+    //            if (empty())
+    //                return 0;
+    head.lock();
+    T *C = head.getValue();
+    if (!C) {
+      partitionState = false; // if pop the final element
+      head.unlock();
+      return 0;
+    }
+    if (tail == C) {
+      tail = 0;
+      head.unlock_and_clear();
+    } else {
+      head.unlock_and_set(C->getNext());
+      C->getNext() = 0;
+    }
+
+    return C;
+  }
+};
+
+template <typename T, bool concurrent> class ConExtLinkedQueue {
+  substrate::PtrLock<T> head;
+  T *tail;
+
+public:
+  typedef ConExtListNode<T> ListNode;
+
+  ConExtLinkedQueue() : tail(0) {}
+
+  bool empty() const { return !tail; }
+
+  void push(T *C) {
+    head.lock();
+    C->getNext() = 0;
+    if (tail) {
+      tail->getNext() = C;
+      tail = C;
       head.unlock();
     } else {
       tail = C;
@@ -141,13 +146,13 @@ public:
     }
   }
 
-  T* pop() {
+  T *pop() {
     // lock free Fast path empty case
     if (empty())
       return 0;
 
     head.lock();
-    T* C = head.getValue();
+    T *C = head.getValue();
     if (!C) {
       head.unlock();
       return 0;
@@ -165,7 +170,7 @@ public:
 
   //! iterators not safe with concurrent modifications
   typedef T value_type;
-  typedef T& reference;
+  typedef T &reference;
   typedef ConExtIterator<T> iterator;
   typedef ConExtIterator<const T> const_iterator;
 
@@ -176,9 +181,8 @@ public:
   const_iterator end() const { return const_iterator(); }
 };
 
-template <typename T>
-struct DummyIndexer {
-  unsigned operator()(const T&) { return 0; }
+template <typename T> struct DummyIndexer {
+  unsigned operator()(const T &) { return 0; }
 };
 
 } // namespace worklists

@@ -1,5 +1,5 @@
 add_subdirectory(sssp)
 add_subdirectory(pr)
-add_subdirectory(ppr)
+# add_subdirectory(ppr)
 add_subdirectory(k-core)
 add_subdirectory(cc)
